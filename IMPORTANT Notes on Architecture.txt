@@ -1,0 +1,35 @@
+1. Instead of directly publishing S3 data into lambda functions, we have used SQS queue on every bucket from which lambda will process. 
+This will ensure no file is missed from the processing due to issues like lambda throttling.
+
+2. Note that, in order to send event notifications from vinod-aws-ai-output-2 S3 bucket into comprehend-queue, the access policy of the queue must be changed to:
+{
+  "Version": "2012-10-17",
+  "Id": "123",
+  "Statement": [
+    {
+      "Sid": "456",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "s3.amazonaws.com"
+      },
+      "Action": "SQS:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-1:100163808729:comprehend-queue",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "100163808729"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:s3:*:*:vinod-aws-ai-output-2"
+        }
+      }
+    }
+  ]
+}
+Same for other buckets/queues as well.
+
+3. I tried a different orchestrating architecture. An SQS queue on vinod-aws-ai S3 bucket and the queue acting as a trigger for a lambda function - vinod-document-processor-orchestrator - which will invoke Step Function - aws-textract-comprehend. This function will have the 3 lambda functions vinod-document-processor, vinod-document-processor-2, vinod-document-processor-3. This doesnt work out because the 3 lambda functions get triggered immediately without waiting for files in the required S3 buckets. Even if you somehow wait for lambda function to complete, lambda itself is triggering asynchrnous APIs of textract and comprehend and the output files will be generated / delivered after lambda function completes. So, this architecture implemented based on file availibility in S3 buckets is the best approach.
+
+4. Using a lambda reserved concurrency of 1 on all lambda functions to avoid multiple concurrent executions, which is really not required here.
+Also, lambda functions have a timeout of 15 mins, queue trigger wait is 5 mins and queues visibility timeout is (15 + 5) * 3 = 60 mins.
+
+5. Note that, we have 36 entries of sentiment scores in the final DynamoDB table for the one input file used. We can average out the sentiment scores and do a mode of sentiment (maximum number of sentiment values) to have a single entry in the final DynamoDB table for every document.
